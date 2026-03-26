@@ -1,10 +1,11 @@
 // ============================================================
-// AFBENESIA DM05 — SCRIPT.JS v2
+// AFBENESIA DM05 — SCRIPT.JS v3
 // Google Sheets real-time sync via Apps Script Web App
 // ============================================================
 
 // ⚙️ KONFIGURASI — ISI URL APPS SCRIPT KAMU DI SINI
-const APPS_SCRIPT_URL = 'PASTE_URL_APPS_SCRIPT_KAMU_DI_SINI';
+// Contoh: 'https://script.google.com/macros/s/XXXXXXXXXXXX/exec'
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxjJVG4UCOlacjAom8aICak8rRr4RxpMvfAKtxSkICHDI_pSvADpGa6gQxufmsbQX3-0g/exec';
 
 const POLL_INTERVAL = 30000; // 30 detik
 const ROWS_PER_PAGE = 20;
@@ -20,46 +21,78 @@ let pollTimer    = null;
 let lastUpdated  = null;
 
 // ============================================================
-// FETCH — Apps Script atau fallback dummy
+// CEK APAKAH URL SUDAH DIKONFIGURASI
+// ============================================================
+function isURLConfigured() {
+  return (
+    APPS_SCRIPT_URL &&
+    APPS_SCRIPT_URL.trim() !== '' &&
+    APPS_SCRIPT_URL !== 'PASTE_URL_APPS_SCRIPT_KAMU_DI_SINI' &&
+    APPS_SCRIPT_URL.startsWith('https://script.google.com/')
+  );
+}
+
+// ============================================================
+// FETCH — Apps Script (tidak ada fallback dummy)
 // ============================================================
 async function fetchPeserta(silent = false) {
-  const isConfigured = APPS_SCRIPT_URL && APPS_SCRIPT_URL !== 'https://script.google.com/macros/s/AKfycbxjJVG4UCOlacjAom8aICak8rRr4RxpMvfAKtxSkICHDI_pSvADpGa6gQxufmsbQX3-0g/exec';
-
-  if (!isConfigured) {
-    allPeserta  = [...DUMMY_PESERTA];
-    lastUpdated = new Date();
+  if (!isURLConfigured()) {
+    setLoadingState(false);
     setLiveMode(false);
-    if (!silent) showToast('📊 Mode Demo — 150 dummy peserta dimuat', 'info');
-    applyFiltersAndRender();
-    updateStats(allPeserta);
+    showError('URL Apps Script belum diisi. Buka script.js dan isi variabel APPS_SCRIPT_URL dengan URL deployment kamu.');
     return;
   }
 
   if (!silent) setLoadingState(true);
 
   try {
-    const res  = await fetch(`${APPS_SCRIPT_URL}?action=getPeserta&_=${Date.now()}`);
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=getPeserta&_=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Error');
+    if (!json.success) throw new Error(json.error || 'Response tidak valid dari Apps Script');
 
     allPeserta  = json.peserta || [];
     lastUpdated = new Date(json.lastUpdated || Date.now());
     setLiveMode(true);
+    hideError();
     if (!silent) showToast(`✅ Data dimuat — ${allPeserta.length} peserta`, 'success');
 
   } catch (err) {
-    console.warn('Sheets fetch failed, fallback to dummy:', err.message);
-    allPeserta  = [...DUMMY_PESERTA];
-    lastUpdated = new Date();
+    console.error('Sheets fetch error:', err.message);
     setLiveMode(false);
-    if (!silent) showToast('⚠️ Gagal terhubung ke Sheets — Data demo aktif', 'warn');
+    showError(`Gagal mengambil data: ${err.message}. Pastikan URL Apps Script benar dan sudah di-deploy dengan akses "Anyone".`);
+    if (!silent) showToast('⚠️ Gagal terhubung ke Google Sheets', 'warn');
   }
 
   if (!silent) setLoadingState(false);
   applyFiltersAndRender();
   updateStats(allPeserta);
   updateLastUpdatedUI();
+}
+
+// ============================================================
+// ERROR BANNER
+// ============================================================
+function showError(msg) {
+  let el = document.getElementById('fetch-error-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fetch-error-banner';
+    el.style.cssText = `
+      background:#fff3cd; color:#856404; border:1px solid #ffc107;
+      border-radius:8px; padding:12px 16px; margin:16px 0;
+      font-size:14px; line-height:1.5;
+    `;
+    const container = document.getElementById('filter-count');
+    if (container) container.before(el);
+  }
+  el.textContent = '⚠️ ' + msg;
+  el.style.display = 'block';
+}
+
+function hideError() {
+  const el = document.getElementById('fetch-error-banner');
+  if (el) el.style.display = 'none';
 }
 
 // ============================================================
@@ -85,9 +118,9 @@ function applyFiltersAndRender() {
   if (searchQuery.trim()) {
     const q = searchQuery.toLowerCase();
     data = data.filter(p =>
-      p.nama.toLowerCase().includes(q) ||
-      p.institusi.toLowerCase().includes(q) ||
-      p.id.toLowerCase().includes(q)
+      (p.nama || '').toLowerCase().includes(q) ||
+      (p.institusi || '').toLowerCase().includes(q) ||
+      (p.id || '').toLowerCase().includes(q)
     );
   }
 
@@ -206,10 +239,10 @@ function updateStats(peserta) {
   const belum  = total - lunas;
   const persen = total > 0 ? Math.round((lunas / total) * 100) : 0;
 
-  anim(document.querySelector('[data-count="total"]'),  total);
-  anim(document.querySelector('[data-count="persen"]'), persen, '%');
-  anim(document.querySelector('[data-count="lunas"]'),  lunas);
-  anim(document.querySelector('[data-count="belum"]'),  belum);
+  document.querySelectorAll('[data-count="total"]').forEach(el => anim(el, total));
+  document.querySelectorAll('[data-count="persen"]').forEach(el => anim(el, persen, '%'));
+  document.querySelectorAll('[data-count="lunas"]').forEach(el => anim(el, lunas));
+  document.querySelectorAll('[data-count="belum"]').forEach(el => anim(el, belum));
 
   const heroCount = document.getElementById('hero-count');
   if (heroCount) heroCount.textContent = total + ' Peserta';
@@ -283,25 +316,129 @@ function initRefreshBtn() {
 }
 
 // ============================================================
-// EXPORT CSV
+// EXPORT EXCEL (.xlsx) — pakai SheetJS
 // ============================================================
+function loadSheetJS(callback) {
+  if (window.XLSX) { callback(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  s.onload = callback;
+  document.head.appendChild(s);
+}
+
 function initExportBtn() {
   const btn = document.getElementById('btn-export');
   if (!btn) return;
   btn.addEventListener('click', () => {
-    const data = filteredData.length < allPeserta.length ? filteredData : allPeserta;
-    let csv = 'No,ID Peserta,Nama,Institusi,Status Pembayaran,Tanggal Daftar\n';
-    data.forEach(p => {
-      const tgl = p.timestamp ? new Date(p.timestamp).toLocaleDateString('id-ID') : '';
-      csv += `${p.no},"${p.id}","${p.nama}","${p.institusi}","${p.status}","${tgl}"\n`;
+    loadSheetJS(() => {
+      const data = filteredData.length < allPeserta.length ? filteredData : allPeserta;
+      const now  = new Date();
+
+      const lunas = data.filter(p => p.status === 'Lunas').length;
+      const belum = data.length - lunas;
+      const pct   = data.length > 0 ? Math.round(lunas / data.length * 100) : 0;
+
+      const infoRows = [
+        ['Kelas Kilat Digital Marketing \u2013 Batch 05', '', '', '', '', ''],
+        ['Afbenesia \u00b7 18 Oktober 2025', '', '', '', '', ''],
+        ['', '', '', '', '', ''],
+        [`Total: ${data.length}`, `Lunas: ${lunas}`, `Belum Bayar: ${belum}`, `% Lunas: ${pct}%`, '', `Diunduh: ${now.toLocaleDateString('id-ID', {day:'2-digit',month:'long',year:'numeric'})}`],
+        ['', '', '', '', '', ''],
+      ];
+
+      const headerRow = ['No', 'ID Peserta', 'Nama Lengkap', 'Institusi / Asal', 'Status Pembayaran', 'Tanggal Daftar'];
+
+      const dataRows = data.map(p => [
+        p.no,
+        p.id,
+        p.nama,
+        p.institusi,
+        p.status,
+        p.timestamp ? new Date(p.timestamp).toLocaleDateString('id-ID', {day:'2-digit', month:'long', year:'numeric'}) : '\u2014',
+      ]);
+
+      const allRows = [...infoRows, headerRow, ...dataRows];
+      const ws = XLSX.utils.aoa_to_sheet(allRows);
+
+      ws['!cols'] = [
+        { wch: 6 }, { wch: 17 }, { wch: 28 }, { wch: 30 }, { wch: 20 }, { wch: 24 }
+      ];
+      ws['!rows'] = [
+        { hpt: 22 }, { hpt: 16 }, { hpt: 6 }, { hpt: 20 }, { hpt: 6 }, { hpt: 20 },
+        ...dataRows.map(() => ({ hpt: 18 }))
+      ];
+      ws['!merges'] = [
+        { s:{r:0,c:0}, e:{r:0,c:5} },
+        { s:{r:1,c:0}, e:{r:1,c:5} },
+      ];
+
+      const styleHeader = {
+        font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+        fill: { patternType: 'solid', fgColor: { rgb: '1B2A4A' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: {
+          top:    { style: 'medium', color: { rgb: '1B2A4A' } },
+          bottom: { style: 'medium', color: { rgb: '1B2A4A' } },
+          left:   { style: 'thin',   color: { rgb: '1B2A4A' } },
+          right:  { style: 'thin',   color: { rgb: '1B2A4A' } },
+        }
+      };
+      const styleLunas = {
+        font: { bold: true, sz: 10, color: { rgb: '166534' } },
+        fill: { patternType: 'solid', fgColor: { rgb: 'DCFCE7' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: { top:{style:'thin',color:{rgb:'D1D5DB'}}, bottom:{style:'thin',color:{rgb:'D1D5DB'}}, left:{style:'thin',color:{rgb:'D1D5DB'}}, right:{style:'thin',color:{rgb:'D1D5DB'}} }
+      };
+      const styleBelum = {
+        font: { bold: true, sz: 10, color: { rgb: '991B1B' } },
+        fill: { patternType: 'solid', fgColor: { rgb: 'FEE2E2' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: { top:{style:'thin',color:{rgb:'D1D5DB'}}, bottom:{style:'thin',color:{rgb:'D1D5DB'}}, left:{style:'thin',color:{rgb:'D1D5DB'}}, right:{style:'thin',color:{rgb:'D1D5DB'}} }
+      };
+      const thinBorder = { top:{style:'thin',color:{rgb:'D1D5DB'}}, bottom:{style:'thin',color:{rgb:'D1D5DB'}}, left:{style:'thin',color:{rgb:'D1D5DB'}}, right:{style:'thin',color:{rgb:'D1D5DB'}} };
+
+      const cols = ['A','B','C','D','E','F'];
+      const HEADER_ROW = 6;
+
+      if (ws['A1']) ws['A1'].s = { font:{ bold:true, sz:14, color:{rgb:'1D4ED8'} } };
+      if (ws['A2']) ws['A2'].s = { font:{ sz:10, italic:true, color:{rgb:'6B7280'} } };
+      ['A4','B4','C4','D4','F4'].forEach(addr => {
+        if (ws[addr]) ws[addr].s = { font:{ bold:true, sz:10 } };
+      });
+
+      cols.forEach(c => {
+        const addr = `${c}${HEADER_ROW}`;
+        if (ws[addr]) ws[addr].s = styleHeader;
+      });
+
+      dataRows.forEach((row, i) => {
+        const excelRow = HEADER_ROW + 1 + i;
+        const isLunas  = row[4] === 'Lunas';
+        const altBg    = i % 2 === 1 ? 'F1F5F9' : 'FFFFFF';
+        cols.forEach((c, ci) => {
+          const addr = `${c}${excelRow}`;
+          if (!ws[addr]) return;
+          if (ci === 4) {
+            ws[addr].s = isLunas ? styleLunas : styleBelum;
+          } else {
+            ws[addr].s = {
+              font: { sz: 10 },
+              fill: { patternType: 'solid', fgColor: { rgb: altBg } },
+              alignment: { horizontal: [0,1,4,5].includes(ci) ? 'center' : 'left', vertical: 'center' },
+              border: thinBorder
+            };
+          }
+        });
+      });
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Daftar Peserta');
+
+      const filename = `peserta-dm05-${now.toISOString().slice(0,10)}.xlsx`;
+      XLSX.writeFile(wb, filename, { bookType: 'xlsx', cellStyles: true });
+
+      showToast(`\ud83d\udce5 Mengunduh ${data.length} peserta sebagai Excel...`, 'success');
     });
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(new Blob([csv], { type:'text/csv;charset=utf-8;' })),
-      download: `peserta-dm05-${new Date().toISOString().slice(0,10)}.csv`
-    });
-    a.click();
-    URL.revokeObjectURL(a.href);
-    showToast(`📥 Mengunduh ${data.length} data peserta...`, 'success');
   });
 }
 
@@ -313,7 +450,7 @@ function setLiveMode(live) {
   const text = document.getElementById('live-text');
   if (!dot || !text) return;
   dot.classList.toggle('live', live);
-  text.textContent = live ? 'Live · Google Sheets' : 'Demo · Data Lokal';
+  text.textContent = live ? 'Live · Google Sheets' : 'Offline · Cek Koneksi';
 }
 
 function updateLastUpdatedUI() {
@@ -400,9 +537,7 @@ function initFadeIn() {
 // ============================================================
 function initActiveNav() {
   const links = document.querySelectorAll('.nav-links a[href^="#"]');
-  new IntersectionObserver(entries => {
-    entries.forEach(e => { if (e.isIntersecting) links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id)); });
-  }, { rootMargin:'-40% 0px -55% 0px' }).observe && document.querySelectorAll('section[id]').forEach(s =>
+  document.querySelectorAll('section[id]').forEach(s =>
     new IntersectionObserver(entries => {
       entries.forEach(e => { if (e.isIntersecting) links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id)); });
     }, { rootMargin:'-40% 0px -55% 0px' }).observe(s)
@@ -418,10 +553,10 @@ document.addEventListener('DOMContentLoaded', () => {
   initHamburger(); initFilter(); initSearch(); initSortHeaders();
   initModal(); initFadeIn(); initActiveNav();
   initRefreshBtn(); initExportBtn();
-  fetchPeserta(false).then(() => startPolling());
+  fetchPeserta(false).then(() => { if (isURLConfigured()) startPolling(); });
 });
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopPolling();
-  else { fetchPeserta(true); startPolling(); }
+  else if (isURLConfigured()) { fetchPeserta(true); startPolling(); }
 });
